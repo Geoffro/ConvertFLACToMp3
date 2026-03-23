@@ -3,9 +3,10 @@
 Simple script to convert FLAC files to MP3 using ffmpeg.
 
 
+
 **Files**
 - [ConvertToMp3.py](ConvertToMp3.py): Command-line converter script
-- [ConvertToMp3PyQt.py](ConvertToMp3PyQt.py): PyQt5-based GUI (recommended)
+- [ConvertToMp3GUI.py](ConvertToMp3GUI.py): PyQt5-based GUI (recommended)
 
 
 
@@ -60,25 +61,30 @@ python ConvertToMp3.py /path/to/flac_directory --artist "Artist Name" --output_d
 The script will create an `mp3` folder inside the input directory by default (or use `--output_dir`).
 
 
+
 **Graphical User Interface:**
 ```bash
-python ConvertToMp3PyQt.py
+python ConvertToMp3GUI.py
 ```
 The GUI allows you to:
-- Import a `.zip` file containing FLAC files
-- Unzip to a target location
-- Auto-detect and edit artist/album metadata
+- Import a `.zip` file or an already unzipped folder containing FLAC files
+- Unzip to a target location (default: next to the zip file, or user-specified)
+- Auto-detect and edit artist/album metadata (album from top-level folder, artist from filenames)
+- Handles multi-disk albums (disks as subfolders like 01, 02, Disc 1, etc.)
 - Check for filename conflicts before conversion
 - Convert FLAC files to MP3 with a button click
-- View logs and status in a scrollable output window
+- Output all MP3s to an `mp3` subfolder inside the chosen output directory, preserving disk subfolders if present
+- View logs and status in a scrollable output window, with real-time updates and a completion message
+
 
 
 **Features & Notes**
-- Converts all `.flac` files in the input directory to `.mp3` using ffmpeg
-- Writes metadata tags (`artist`, `album`, and optional `track`) to each MP3 file
+- Converts all `.flac` files in the input directory (and subfolders) to `.mp3` using ffmpeg
+- Writes metadata tags (`artist`, `album`, `track`, and `disc` if multi-disk) to each MP3 file
 - If `ffmpeg` cannot be found, the script exits before converting
-- Output files are placed in an `mp3` subfolder by default, or in a custom directory with `--output_dir`
-- The GUI supports importing from zip, metadata editing, conflict checking, and conversion with status logging
+- Output files are placed in an `mp3` subfolder inside the output directory (with disk subfolders if needed)
+- The GUI supports importing from zip or folder, metadata editing, conflict checking, and conversion with real-time status logging
+
 
 **Filename Patterns & Auto-Detection**
 
@@ -90,14 +96,18 @@ The GUI allows you to:
   - `01-Something.flac`
 - If the artist is not specified, the scripts will attempt to auto-detect the artist from filenames. If successful, you can confirm or edit the detected artist before proceeding.
 - If filenames do not match the expected patterns, auto-detection and track numbering may not work correctly, and the script will warn you.
+- For multi-disk albums, disk folders can be named `01`, `02`, `Disc 1`, `CD2`, etc. The GUI will detect and tag the correct disk number.
 
 **Interactive Prompts & Automation**
 
 - If the artist is auto-detected, the script will prompt for confirmation before converting. Press `Enter` or type `y`/`yes` to accept, or `n`/`no` to abort.
 - For fully automated or batch use, a non-interactive mode is not currently implemented. (You may want to add a `--yes` flag in the future for automation.)
 
-**Output Filenames**
 
+**Output Structure**
+
+- All converted MP3s are placed in an `mp3` subfolder inside the output directory you choose (or next to the zip file by default).
+- For multi-disk albums, each disk's tracks are placed in a subfolder (e.g., `mp3/Disc 1/`).
 - Output MP3 filenames are generated from the track name, sanitized for filesystem safety.
 - If two tracks have the same name after sanitization, the script will skip the second file and print an error. To avoid this, ensure track names are unique, or consider including the track number in the output filename.
 
@@ -108,15 +118,27 @@ The GUI allows you to:
 - **Filename pattern warnings:** If you see warnings about track numbering or filename patterns, rename your files to match the expected format for best results.
 - **Output file already exists:** The script will skip files if the output MP3 already exists. Delete or rename existing files if you want to re-convert.
 
+
 **Example Directory Structure**
 
 ```
-input_dir/
-	01-First Song.flac
-	02-Second Song.flac
-	...
+O (2002)/
+  01/
+    01-First Song.flac
+    02-Second Song.flac
+  02/
+    01-Another Song.flac
+    02-Yet Another.flac
 ```
 
-**Planned Improvements**
-- Add a non-interactive mode (e.g., `--yes` flag) for automation.
-- Optionally include track numbers in output filenames for uniqueness.
+After conversion (output dir = `O (2002)`):
+```
+O (2002)/
+  mp3/
+    Disc 1/
+      First Song.mp3
+      Second Song.mp3
+    Disc 2/
+      Another Song.mp3
+      Yet Another.mp3
+```
