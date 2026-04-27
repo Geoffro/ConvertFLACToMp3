@@ -3,7 +3,7 @@ import zipfile
 import shutil
 from PyQt5 import QtWidgets, QtCore
 from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QFileDialog, QLineEdit, QLabel, QPushButton, QTextEdit, QVBoxLayout, QHBoxLayout, QWidget, QGroupBox, QFormLayout
+    QApplication, QMainWindow, QFileDialog, QLineEdit, QLabel, QPushButton, QTextEdit, QVBoxLayout, QHBoxLayout, QWidget, QGroupBox, QFormLayout, QToolButton, QMenu, QAction
 )
 from ConvertToMp3 import (
     list_flac_files, parse_track_info, clean_album_name, check_ffmpeg,
@@ -40,7 +40,7 @@ class ConvertToMp3GUI(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("ConvertToMp3 - Import and Convert")
-        self.setGeometry(100, 100, 750, 600)
+        self.setGeometry(100, 100, 1100, 700)
         self.zip_path = None
         self.unzip_dir = None
         self.init_ui()
@@ -49,14 +49,16 @@ class ConvertToMp3GUI(QMainWindow):
         main_widget = QWidget()
         main_layout = QVBoxLayout()
 
-        # Import zip and output dir
+        # Import and output dir
         import_layout = QHBoxLayout()
-        self.import_zip_btn = QPushButton("Import .zip")
-        self.import_zip_btn.clicked.connect(self.import_zip)
-        import_layout.addWidget(self.import_zip_btn)
-        self.import_folder_btn = QPushButton("Import Folder")
-        self.import_folder_btn.clicked.connect(self.import_folder)
-        import_layout.addWidget(self.import_folder_btn)
+        self.import_btn = QToolButton()
+        self.import_btn.setText("Import Album  ")
+        self.import_btn.setPopupMode(QToolButton.InstantPopup)
+        import_menu = QMenu()
+        import_menu.addAction("Import .zip File", self._import_zip_dialog)
+        import_menu.addAction("Import Folder", self._import_folder_dialog)
+        self.import_btn.setMenu(import_menu)
+        import_layout.addWidget(self.import_btn)
         import_layout.addWidget(QLabel("Unzip to:"))
         self.output_dir_edit = QLineEdit()
         import_layout.addWidget(self.output_dir_edit)
@@ -82,6 +84,7 @@ class ConvertToMp3GUI(QMainWindow):
         self.tracks_table.setColumnCount(4)
         self.tracks_table.setHorizontalHeaderLabels(["Disk", "Track #", "Track Name", "Filename"])
         self.tracks_table.horizontalHeader().setStretchLastSection(True)
+        self.tracks_table.verticalHeader().setVisible(False)
         main_layout.addWidget(QLabel("Tracks (editable):"))
         main_layout.addWidget(self.tracks_table)
 
@@ -109,31 +112,47 @@ class ConvertToMp3GUI(QMainWindow):
         main_widget.setLayout(main_layout)
         self.setCentralWidget(main_widget)
 
-    def import_folder(self):
-        folder_path = QFileDialog.getExistingDirectory(self, "Select Folder", "")
-        if not folder_path:
-            return
+    def clear_state(self):
         self.zip_path = None
+        self.unzip_dir = None
+        self.artist_edit.clear()
+        self.album_edit.clear()
+        self.output_dir_edit.clear()
+        try:
+            self.tracks_table.itemChanged.disconnect()
+        except Exception:
+            pass
+        self.tracks_table.setRowCount(0)
+        self.save_btn.setEnabled(False)
+        self.log_text.clear()
+
+    def _import_zip_dialog(self):
+        downloads = os.path.expanduser("~/Downloads")
+        zip_path, _ = QFileDialog.getOpenFileName(self, "Select Zip File", downloads, "ZIP Files (*.zip)")
+        if zip_path:
+            self._import_zip(zip_path)
+
+    def _import_folder_dialog(self):
+        downloads = os.path.expanduser("~/Downloads")
+        folder_path = QFileDialog.getExistingDirectory(self, "Select Album Folder", downloads)
+        if folder_path:
+            self._import_folder(folder_path)
+
+    def _import_folder(self, folder_path):
+        self.clear_state()
         self.unzip_dir = folder_path
         self.output_dir_edit.setText(folder_path)
         self.log(f"Imported folder: {folder_path}")
         self.populate_metadata()
         self.populate_tracks_table()
 
-    def import_zip(self):
-        zip_path, _ = QFileDialog.getOpenFileName(self, "Select Zip File", "", "Zip Files (*.zip)")
-        if not zip_path:
-            return
+    def _import_zip(self, zip_path):
+        self.clear_state()
         self.zip_path = zip_path
-        # Determine output dir
-        output_dir = self.output_dir_edit.text().strip()
-        if not output_dir:
-            # Use zip filename (without extension) in the same directory as the zip file
-            zip_dir = os.path.dirname(zip_path)
-            base = os.path.splitext(os.path.basename(zip_path))[0]
-            output_dir = os.path.join(zip_dir, base)
-            self.output_dir_edit.setText(output_dir)
-        # Create output dir if it doesn't exist
+        zip_dir = os.path.dirname(zip_path)
+        base = os.path.splitext(os.path.basename(zip_path))[0]
+        output_dir = os.path.join(zip_dir, base)
+        self.output_dir_edit.setText(output_dir)
         try:
             os.makedirs(output_dir, exist_ok=True)
         except Exception as e:
@@ -143,9 +162,6 @@ class ConvertToMp3GUI(QMainWindow):
             zip_ref.extractall(output_dir)
         self.unzip_dir = output_dir
         self.log(f"Unzipped {zip_path} to {output_dir}")
-        folder_name = os.path.basename(os.path.normpath(output_dir))
-        album = clean_album_name(folder_name)
-        self.album_edit.setText(album)
         self.populate_metadata()
         self.populate_tracks_table()
 
