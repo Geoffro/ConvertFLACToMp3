@@ -1,4 +1,6 @@
 import os
+import sys
+import subprocess
 import zipfile
 import shutil
 from PyQt5 import QtWidgets, QtCore
@@ -10,6 +12,63 @@ from ConvertToMp3 import (
     convert_flac_to_mp3, detect_artist_from_filenames, all_tracks_numbered
 )
 import re
+
+
+class ConversionWorker(QtCore.QObject):
+    log_message = QtCore.pyqtSignal(str)
+    finished = QtCore.pyqtSignal()
+
+    def __init__(self, ffmpeg_path, artist, album, bitrate, mp3_root, multiple_disks, tracks):
+        super().__init__()
+        self.ffmpeg_path = ffmpeg_path
+        self.artist = artist
+        self.album = album
+        self.bitrate = bitrate
+        self.mp3_root = mp3_root
+        self.multiple_disks = multiple_disks
+        self.tracks = tracks
+
+    def run(self):
+        for track in self.tracks:
+            disk = track['disk']
+            track_number = track['track_number']
+            track_name = track['track_name']
+            flac_path = track['flac_path']
+            safe_name = re.sub(r'[\\/:"*?<>|]+', '', track_name)
+            safe_name = re.sub(r'\s+', ' ', safe_name).strip()
+            if self.multiple_disks and disk:
+                disk_folder = os.path.join(self.mp3_root, f"Disc {disk}")
+                os.makedirs(disk_folder, exist_ok=True)
+                mp3_path = os.path.join(disk_folder, f"{safe_name}.mp3")
+            else:
+                os.makedirs(self.mp3_root, exist_ok=True)
+                mp3_path = os.path.join(self.mp3_root, f"{safe_name}.mp3")
+            if os.path.exists(mp3_path):
+                self.log_message.emit(f"Skipping existing: {mp3_path}")
+                continue
+            cmd = [
+                self.ffmpeg_path,
+                '-i', flac_path,
+                '-b:a', self.bitrate,
+                '-y',
+                '-metadata', f'artist={self.artist}',
+                '-metadata', f'album={self.album}'
+            ]
+            if track_number:
+                cmd += ['-metadata', f'track={track_number}']
+            if self.multiple_disks and disk:
+                cmd += ['-metadata', f'disc={disk}']
+            cmd += [mp3_path]
+            try:
+                self.log_message.emit(f"Converting: {os.path.basename(flac_path)} -> {mp3_path}")
+                result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                if result.returncode == 0:
+                    self.log_message.emit(f"Converted: {safe_name}.mp3")
+                else:
+                    self.log_message.emit(f"Failed to convert {os.path.basename(flac_path)}: {result.stderr.decode().strip()}")
+            except Exception as e:
+                self.log_message.emit(f"Failed to convert {os.path.basename(flac_path)}: {e}")
+        self.finished.emit()
 
 class ConvertToMp3GUI(QMainWindow):
 
@@ -252,6 +311,7 @@ class ConvertToMp3GUI(QMainWindow):
             self.log("No conflicts detected.")
 
     def do_conversion(self):
+        self.log("Starting conversion...")
         output_dir = self.output_dir_edit.text()
         artist = self.artist_edit.text()
         album = self.album_edit.text()
@@ -274,58 +334,35 @@ class ConvertToMp3GUI(QMainWindow):
                 disk_values.add(disk)
         multiple_disks = len(disk_values) > 1
         mp3_root = os.path.join(output_dir, "mp3")
+        tracks = []
         for row in range(self.tracks_table.rowCount()):
-            disk = self.tracks_table.item(row, 0).text()
-            track_number = self.tracks_table.item(row, 1).text()
-            track_name = self.tracks_table.item(row, 2).text()
-            flac_path = self.tracks_table.item(row, 3).text()
-            safe_name = re.sub(r'[\\/:"*?<>|]+', '', track_name)
-            safe_name = re.sub(r'\s+', ' ', safe_name).strip()
-            # Write to mp3/disk-specific subfolder if multiple disks
-            if multiple_disks and disk:
-                disk_folder = os.path.join(mp3_root, f"Disc {disk}")
-                os.makedirs(disk_folder, exist_ok=True)
-                mp3_path = os.path.join(disk_folder, f"{safe_name}.mp3")
-            else:
-                os.makedirs(mp3_root, exist_ok=True)
-                mp3_path = os.path.join(mp3_root, f"{safe_name}.mp3")
-            if os.path.exists(mp3_path):
-                self.log(f"Skipping existing: {mp3_path}")
-                continue
-            cmd = [
-                ffmpeg_path,
-                '-i', flac_path,
-                '-b:a', bitrate,
-                '-y',
-                '-metadata', f'artist={artist}',
-                '-metadata', f'album={album}'
-            ]
-            if track_number:
-                cmd += ['-metadata', f'track={track_number}']
-            # Always write disk number if there are multiple disks and disk is present
-            if multiple_disks and disk:
-                cmd += ['-metadata', f'disc={disk}']
-            cmd += [mp3_path]
-            try:
-                import subprocess
-                self.log(f"Converting: {os.path.basename(flac_path)} -> {mp3_path}")
-                QtWidgets.QApplication.processEvents()
-                result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                if result.returncode == 0:
-                    self.log(f"Converted: {safe_name}.mp3")
-                else:
-                    self.log(f"Failed to convert {os.path.basename(flac_path)}: {result.stderr.decode().strip()}")
-            except Exception as e:
-                self.log(f"Failed to convert {os.path.basename(flac_path)}: {e}")
-            QtWidgets.QApplication.processEvents()
+            tracks.append({
+                'disk': self.tracks_table.item(row, 0).text(),
+                'track_number': self.tracks_table.item(row, 1).text(),
+                'track_name': self.tracks_table.item(row, 2).text(),
+                'flac_path': self.tracks_table.item(row, 3).text(),
+            })
+
+        self.convert_btn.setEnabled(False)
+        self.conversion_thread = QtCore.QThread()
+        self.conversion_worker = ConversionWorker(ffmpeg_path, artist, album, bitrate, mp3_root, multiple_disks, tracks)
+        self.conversion_worker.moveToThread(self.conversion_thread)
+        self.conversion_worker.log_message.connect(self.log)
+        self.conversion_worker.finished.connect(self._on_conversion_finished)
+        self.conversion_thread.started.connect(self.conversion_worker.run)
+        self.conversion_thread.start()
+
+    def _on_conversion_finished(self):
         self.log("Conversion complete.")
+        self.conversion_thread.quit()
+        self.conversion_thread.wait()
+        self.convert_btn.setEnabled(True)
     def log(self, msg):
         self.log_text.append(msg)
         self.log_text.ensureCursorVisible()
         QtWidgets.QApplication.processEvents()
 
 if __name__ == "__main__":
-    import sys
     app = QApplication(sys.argv)
     window = ConvertToMp3GUI()
     window.show()
