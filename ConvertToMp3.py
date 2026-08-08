@@ -6,8 +6,20 @@ import sys
 import shutil
 import subprocess
 
-def list_flac_files(input_dir):
-    return [f for f in os.listdir(input_dir) if f.lower().endswith('.flac')]
+AUDIO_EXTENSIONS = ('.flac', '.mp3')
+
+def list_audio_files(input_dir):
+    return [f for f in os.listdir(input_dir) if f.lower().endswith(AUDIO_EXTENSIONS)]
+
+def encoding_args(src_path, bitrate):
+    """ffmpeg codec args for a source file.
+
+    MP3 sources are stream-copied so tags can be rewritten without a lossy
+    re-encode; everything else is encoded at the requested bitrate.
+    """
+    if src_path.lower().endswith('.mp3'):
+        return ['-c', 'copy']
+    return ['-b:a', bitrate]
 
 def parse_track_info(base):
     """
@@ -44,7 +56,7 @@ def check_ffmpeg():
     
     return ffmpeg_path
 
-def convert_flac_to_mp3(input_dir, output_dir, bitrate, artist):
+def convert_to_mp3(input_dir, output_dir, bitrate, artist):
 
     ffmpeg_path = check_ffmpeg()
     if not ffmpeg_path:
@@ -59,8 +71,8 @@ def convert_flac_to_mp3(input_dir, output_dir, bitrate, artist):
 
     os.makedirs(output_dir, exist_ok=True)
 
-    for filename in list_flac_files(input_dir):
-        flac_path = os.path.join(input_dir, filename)
+    for filename in list_audio_files(input_dir):
+        src_path = os.path.join(input_dir, filename)
         base = os.path.splitext(filename)[0]
         track_number, track_name = parse_track_info(base)
 
@@ -78,8 +90,8 @@ def convert_flac_to_mp3(input_dir, output_dir, bitrate, artist):
 
         cmd = [
             ffmpeg_path,
-            '-i', flac_path,
-            '-b:a', bitrate,
+            '-i', src_path,
+        ] + encoding_args(src_path, bitrate) + [
             '-y', # overwrite output if needed
             '-metadata', f'artist={artist}',
             '-metadata', f'album={album_name}'
@@ -98,9 +110,9 @@ def convert_flac_to_mp3(input_dir, output_dir, bitrate, artist):
             print(f"Failed to convert {filename}: {e}")
 
 def detect_artist_from_filenames(input_dir):
-    files = list_flac_files(input_dir)
+    files = list_audio_files(input_dir)
     if not files:
-        print("No .flac files found in the input directory.")
+        print("No audio files found in the input directory.")
         return None
 
     # Pattern: <Artist>-<track number>-<track name>
@@ -122,9 +134,9 @@ def detect_artist_from_filenames(input_dir):
 # In some cases, the artist may not be present, but will still follow the pattern <track number>-<track name>. This is also acceptable, but the track number must be present and sequential starting from 1.
 # This also checks that all files match the pattern, which is necessary for auto-detection to work properly.
 def all_tracks_numbered(input_dir):
-    files = list_flac_files(input_dir)
+    files = list_audio_files(input_dir)
     if not files:
-        print("No .flac files found in the input directory.")
+        print("No audio files found in the input directory.")
         return False
 
     pattern = re.compile(r'^(.+?-\s*)?(\d+)\s*-\s*.+$', re.IGNORECASE)
@@ -152,11 +164,11 @@ if __name__ == "__main__":
     if not ffmpeg_path:
         sys.exit(0)
 
-    parser = argparse.ArgumentParser(description="Convert FLAC files to MP3 format.")
-    parser.add_argument("input_dir", type=str, help="Path to the input directory containing FLAC files.")
+    parser = argparse.ArgumentParser(description="Convert an album to tagged MP3s. FLAC files are encoded; existing MP3s are copied and retagged.")
+    parser.add_argument("input_dir", type=str, help="Path to the input directory containing FLAC or MP3 files.")
     parser.add_argument("--artist", type=str, required=False, help="Artist name (optional). If omitted the script will try to auto-detect from filenames.")
     parser.add_argument("--output_dir", type=str, default=None, help="Output directory (default: input_dir/mp3).")
-    parser.add_argument("--bitrate", type=str, default="192k", help="Bitrate for MP3 files (default: 192k).")
+    parser.add_argument("--bitrate", type=str, default="192k", help="Encoding bitrate (default: 192k). Ignored for MP3 sources, which are copied as-is.")
 
     args = parser.parse_args()
 
@@ -185,4 +197,4 @@ if __name__ == "__main__":
             print("Artist not confirmed. Aborting without conversion.")
             sys.exit(0)
 
-    convert_flac_to_mp3(args.input_dir, output_directory, args.bitrate, artist)
+    convert_to_mp3(args.input_dir, output_directory, args.bitrate, artist)
